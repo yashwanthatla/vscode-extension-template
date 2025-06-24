@@ -1,12 +1,12 @@
 {
-  "name": "vscode-new-extension-template",
-  "displayName": "Clarkio's VS Code Extension Template",
-  "description": "An extension template used for jumpstarting development of VS Code extensions",
-  "version": "1.0.2",
+  "name": "codeowl-ai-extension",
+  "displayName": "CodeOwl AI",
+  "description": "AI-powered coding assistant extension",
+  "version": "1.0.0",
   "engines": {
     "vscode": "^1.78.0"
   },
-  "publisher": "clarkio",
+  "publisher": "codeowl",
   "categories": [
     "Other"
   ],
@@ -16,10 +16,30 @@
   "contributes": {
     "commands": [
       {
-        "command": "vscode-extension-template.helloWorld",
-        "title": "Hello World"
+        "command": "codeowl.openSidebar",
+        "title": "Open CodeOwl AI",
+        "icon": "$(robot)"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codeowl",
+          "title": "CodeOwl AI",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "codeowl": [
+        {
+          "id": "codeowlSidebar",
+          "name": "CodeOwl AI",
+          "type": "webview",
+          "when": "true"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run esbuild-base -- --minify",
