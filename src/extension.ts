@@ -1,6 +1,8 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import axios from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Interface for parsed diff hunks
 interface DiffHunk {
@@ -11,6 +13,14 @@ interface DiffHunk {
   lines: DiffLine[];
 }
 
+interface CodeReviewSuggestion {
+  filePath: string;
+  // *** MODIFIED *** From a single line to a range
+  startLine: number;
+  endLine: number;
+  suggestion: string;
+}
+
 interface DiffLine {
   type: 'add' | 'remove' | 'context';
   content: string;
@@ -18,13 +28,23 @@ interface DiffLine {
   newLineNumber?: number;
 }
 
+interface LiteLLMResponse {
+  choices: Array<{
+    message: {
+      content: string;
+    };
+  }>;
+}
+
+interface CodeReviewSuggestion {
+  filePath: string;
+  lineNumber: number;
+  suggestion: string;
+}
+
 interface CodeReview {
   summary: string;
-  suggestions: {
-      filePath: string;
-      lineNumber: number;
-      suggestion: string;
-  }[];
+  suggestions: CodeReviewSuggestion[];
 }
 
 interface ParsedDiff {
@@ -645,64 +665,115 @@ class CodeOwlSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async performCodeReview(analysis: { diffs: ParsedDiff[] }): Promise<CodeReview> {
-    console.log("🤖 Performing mock AI code review...");
+    console.log("🤖 Performing AI code review using Gemini...");
     
-    // Step 1: Format the diffs into a prompt for the LLM.
-    let prompt = "You are an expert code reviewer. Analyze the following git diff and provide feedback. Focus on potential bugs, style issues, and areas for improvement. For each suggestion, you MUST specify the file path and the relevant new line number from the diff. Here is the diff:\n\n";
+    // Get the API key from VS Code settings
+    const config = vscode.workspace.getConfiguration('codeowl');
+    let apiKey = config.get<string>('geminiApiKey');
+    
+    if (!apiKey) {
+      // If API key is not found, prompt the user to enter it
+      const key = await vscode.window.showInputBox({
+        prompt: 'Please enter your Gemini API key',
+        password: true, // This will mask the input
+        placeHolder: 'Enter your Gemini API key here'
+      });
+
+      if (key) {
+        // Save the API key to VS Code settings
+        await config.update('geminiApiKey', key, vscode.ConfigurationTarget.Global);
+        apiKey = key;
+        console.log('✅ API key saved to settings');
+      } else {
+        const message = 'Gemini API key is required for code review functionality.';
+        console.error(message);
+        vscode.window.showErrorMessage(message);
+        throw new Error(message);
+      }
+    }
+    // Initialize Gemini
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    // Step 1: Format the diffs into a prompt for the LLM
+    let prompt = `You are an expert code reviewer. Analyze the following git diff and provide detailed, specific feedback.
+
+For each suggestion:
+- ALWAYS specify the exact file path.
+- ALWAYS include the start and end line numbers for the code block the suggestion applies to. If it's a single line, startLine and endLine should be the same.
+- Be specific and actionable in your recommendations.
+
+IMPORTANT: Respond with ONLY a valid JSON object, no markdown formatting, no backticks, no explanation text.
+
+Here is the diff to analyze:
+
+`;
 
     for (const fileDiff of analysis.diffs) {
-        prompt += `--- File: ${fileDiff.filePath} ---\n`;
-        for (const hunk of fileDiff.hunks) {
-            prompt += `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@\n`;
-            for (const line of hunk.lines) {
-                if (line.type === 'add') {
-                    prompt += `+ (Line ${line.newLineNumber}) ${line.content}\n`;
-                } else if (line.type === 'remove') {
-                    prompt += `- (Line ${line.oldLineNumber}) ${line.content}\n`;
-                } else {
-                    prompt += `  ${line.content}\n`;
-                }
-            }
+      prompt += `=== File: ${fileDiff.filePath} ===\n`;
+      for (const hunk of fileDiff.hunks) {
+        prompt += `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@\n`;
+        for (const line of hunk.lines) {
+          if (line.type === 'add') {
+            prompt += `+ (Line ${line.newLineNumber}) ${line.content}\n`;
+          } else if (line.type === 'remove') {
+            prompt += `- (Line ${line.oldLineNumber}) ${line.content}\n`;
+          } else {
+            prompt += `  ${line.content}\n`;
+          }
         }
-        prompt += "\n";
+      }
+      prompt += "\n";
     }
 
-    console.log("📝 Generated LLM Prompt:", prompt);
-
-    // Step 2: Simulate the API call and latency.
-    // In a real application, you would replace this with a call to an actual LLM API.
-    // e.g., using `fetch` or a library like `openai`.
-    await new Promise(resolve => setTimeout(resolve, 2500)); // Simulate 2.5 seconds of thinking
-
-    console.log("✅ Mock LLM call complete. Generating response.");
-
-    // Step 3: Create a structured mock response.
-    // This mimics what a real LLM would return.
-    const mockResponse: CodeReview = {
-        summary: "The commit introduces good features, but there are a few opportunities for improvement in terms of robustness and code style. I've highlighted them below.",
-        suggestions: []
-    };
-
-    // Let's add some dynamic suggestions based on the diff content
-    const firstDiff = analysis.diffs[0];
-    if (firstDiff) {
-        mockResponse.suggestions.push({
-            filePath: firstDiff.filePath,
-            lineNumber: firstDiff.hunks[0]?.lines.find(l => l.type === 'add')?.newLineNumber || 1,
-            suggestion: "This new logic looks promising. Could we add a comment here to explain why this change was necessary for future maintainers?"
-        });
+    prompt += `\nRespond with a JSON object in this exact format (no markdown, no backticks):
+{
+  "summary": "A high-level overview of the changes and their impact",
+  "suggestions": [
+    {
+      "filePath": "exact/path/to/file.ext",
+      "startLine": 120,
+      "endLine": 125,
+      "suggestion": "Detailed suggestion for this block of code with an explanation."
     }
-    
-    // Add a generic suggestion if no others were found
-    if(mockResponse.suggestions.length === 0 && analysis.diffs.length > 0) {
-       mockResponse.suggestions.push({
-            filePath: analysis.diffs[0].filePath,
+  ]
+}`;
+
+    console.log("📝 Generated prompt:", prompt);
+
+    try {
+      // Generate content using Gemini
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      let content = response.text();
+
+      // Clean up any potential markdown formatting
+      content = content.replace(/\`\`\`json\n?|\`\`\`\n?/g, '').trim();
+
+      console.log("✅ Received Gemini response:", content);
+
+      // Parse the JSON response
+      try {
+        const review = JSON.parse(content) as CodeReview;
+        console.log("📊 Parsed review:", review);
+        return review;
+      } catch (parseError) {
+        console.error("Error parsing Gemini response as JSON:", parseError);
+        console.error("Raw response:", content);
+        // Fallback: Create a structured response from the raw text
+        return {
+          summary: "Failed to parse AI response as JSON. Raw feedback follows:",
+          suggestions: [{
+            filePath: analysis.diffs[0]?.filePath || "unknown",
             lineNumber: 1,
-            suggestion: "Overall, the changes in this file are solid. No critical issues found."
-        });
+            suggestion: content
+          }]
+        };
+      }
+    } catch (error) {
+      console.error("Error calling Gemini:", error);
+      throw error;
     }
-
-    return mockResponse;
   }
 
   public resolveWebviewView(
