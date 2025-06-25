@@ -19,8 +19,42 @@
         "command": "codeowl.openSidebar",
         "title": "Open CodeOwl AI",
         "icon": "$(robot)"
+      },
+      {
+        "command": "codeowl.applySuggestion",
+        "title": "Apply",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codeowl.fixWithAI",
+        "title": "Fix with AI",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "codeowl.markUnderstood",
+        "title": "Understood",
+        "icon": "$(close)"
       }
     ],
+    "menus": {
+      "comments/commentThread/title": [
+        {
+          "command": "codeowl.applySuggestion",
+          "when": "commentController == codeowl.aiReview && commentThread == codeowl-comment-with-change",
+          "group": "inline@1"
+        },
+        {
+          "command": "codeowl.fixWithAI",
+          "when": "commentController == codeowl.aiReview",
+          "group": "inline@2"
+        },
+        {
+          "command": "codeowl.markUnderstood",
+          "when": "commentController == codeowl.aiReview",
+          "group": "inline@3"
+        }
+      ]
+    },
     "configuration": {
       "title": "CodeOwl AI",
       "properties": {
